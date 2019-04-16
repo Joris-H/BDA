@@ -4,69 +4,65 @@ library(tokenizers)
 library(tidytext)
 library(caret)
 
-##extract features for the training dataset
-essays_features  <- 
+
+# Add pronouns to nrc lexicon ---------------------------------------------
+nrc <- get_sentiments("nrc")
+pronouns <- tibble(word = pos_df_pronouns$pronoun, sentiment = pos_df_pronouns$point_of_view)
+XXXX <- tibble(word = "xxxx", sentiment = "XXXX")
+new_nrc <- bind_rows(nrc, pronouns, XXXX)
+
+
+# extract nrc features of all transcripts ---------------------------------
+transcript_features_nrc <- 
   transcripts %>%
   unnest_tokens(token, vlog, token = 'words') %>%
-  anti_join(get_stopwords(), by = c(token = 'word')) %>%
-  inner_join(get_sentiments('nrc'), by = c(token = 'word')) %>%
+  inner_join(new_nrc, by = c(token = 'word')) %>%
   count(Id, `sentiment`) %>%
   spread(sentiment, n, fill = 0)
 
-##join the fetures with the original dataset so that we have the 
-#personality classfieier as well 
-essays_features  <- 
-  inner_join(essays, essays_features, by = "#AUTHID") %>%
-  dplyr::select(-TEXT)
 
-head(essays_features)
+# extract proportions of nrc features used and add total count ------------
+proportions_nrc <- transcript_features_nrc %>% 
+  mutate(sumVar = rowSums(.[,2:15])) %>% 
+  mutate_at(vars(XXXX:trust), funs(./ sumVar))
 
 
-##a possible improvement? Looking at sentiment in proportion to the total
-#words in the text 
-
-##extracting proportions for essays (training set)
-essays_features_sent  <- transcripts %>%
-  unnest_tokens(token, vlog, token = 'words') %>%
-  anti_join(get_stopwords(), by = c(token = 'word')) %>% 
-  inner_join(get_sentiments('nrc'), by = c(token = 'word')) %>%
-  count(Id, `sentiment`) 
-
-proportions <- essays_features_sent %>% 
-  spread(sentiment, n, fill = 0) %>% 
-  mutate(sumVar = rowSums(.[2:11])) %>% 
-  mutate_at(vars(anger:trust), funs(./ sumVar)) 
-
-##extracting tes
-
-#######
-
-
-essays_features_nrc  <- 
+# compute weighted sentiment sums with afinn scores -----------------------
+# extract nrc features
+features_nrc  <- 
   transcripts %>%
   unnest_tokens(token, vlog, token = 'words') %>%
-  anti_join(get_stopwords(), by = c(token = 'word')) %>%
   inner_join(get_sentiments('nrc'), by = c(token = 'word')) 
 
-essays_features_afinn <- 
+# extract afinn features
+features_afinn <- 
   transcripts %>%
   unnest_tokens(token, vlog, token = 'words') %>%
-  anti_join(get_stopwords(), by = c(token = 'word')) %>%
   inner_join(get_sentiments('afinn'), by = c(token = 'word'))
 
-joined <- left_join(essays_features_nrc, essays_features_afinn)
-
-score_data <- joined %>% 
+# calculate the sum of afinn scores per feature
+features_scored <- 
+  left_join(features_nrc, features_afinn) %>% 
   group_by(Id, sentiment) %>% 
   summarise(sums = sum(score, na.rm = TRUE)) %>% 
   spread(sentiment, sums, fill = 0)
 
- ##################
-train_joined <- train_set %>% inner_join(proportions, by = c('vlogId' = 'Id')) %>% inner_join(score_data, by = c('vlogId' = 'Id'))
 
-test_joined <-  test_set %>% inner_join(proportions, by = c('vlogId' = 'Id')) %>% inner_join(score_data, by = c('vlogId' = 'Id'))
+# join new computed variables with train and test set ---------------------
+train_joined <- train_set %>% 
+  inner_join(proportions_nrc, by = c('vlogId' = 'Id')) %>% 
+  inner_join(features_scored, by = c('vlogId' = 'Id'))
 
+test_joined <- test_set %>% 
+  inner_join(proportions_nrc, by = c('vlogId' = 'Id')) %>% 
+  inner_join(features_scored, by = c('vlogId' = 'Id'))
 
+# recode gender to factor
+train_joined <- train_joined %>% 
+  mutate(gender = as.factor(gender))
+
+test_joined <- test_joined %>% 
+  mutate(gender = as.factor(gender))
 ####################
 
 variables = train_joined %>% dplyr::select(-c(1:6, gender))
@@ -79,6 +75,13 @@ eigenvalues <- eigen(correlations)
 
 data_ext <- train_joined %>% dplyr::select(-c(vlogId, Agr:Open, gender))
 
+
+
+
+
+
+VARIABLES_TO_USE <- data_ext %>% select(-1) %>% select(index)
+
 # Remove outliers!
 
 findOutlier <- function(matrix, cutoff = 3) {
@@ -86,7 +89,7 @@ findOutlier <- function(matrix, cutoff = 3) {
   sds <- apply(matrix, 2, sd, na.rm = TRUE)
   ## Identify the cells with value greater than cutoff * sd (column wise)
   result <- mapply(function(d, s) {
-    which(d - mean(d) > cutoff * s)
+    which(abs(d - mean(d)) > cutoff * s)
   }, matrix, sds)
   result
 }
@@ -100,18 +103,27 @@ data_ext_no_out <- data_ext %>% slice(-outliers_to_remove)
 
 # EXPERIMENT 15 highest correlating variables
 
-data_ext_experimental <- data_ext %>% dplyr::select(order(cor(data_ext)[,1], decreasing = TRUE)[1:15])
+data_ext_experimental <- data_ext %>% dplyr::select(order(abs(cor(data_ext))[,1], decreasing = TRUE)[1:30])
 
-outliers_experimental <- findOutlier(data_ext_experimental)
-outliers_to_remove_experimental <- unlist(outliers_experimental) %>% unique()
+#outliers_experimental <- findOutlier(data_ext_experimental)
+#outliers_to_remove_experimental <- unlist(outliers_experimental) %>% unique()
+
+
+#data_ext_final <- bind_cols(Extr = train_joined$Extr, VARIABLES_TO_USE)
+
 
 data_ext_experimental_noOut <- data_ext_experimental %>% slice(-c(outliers_to_remove))
 
+#data_ext_final_noOut <-  data_ext_final %>% slice(-c(outliers_to_remove))
+
 
 control <- trainControl(method = 'repeatedcv', number = 5, repeats = 3, search = 'random')
+ 
+model_ext <- train(Extr ~ ., data = data_ext_no_out,method = 'leapSeq',preProcess = c('center', 'scale'), trControl = control, tuneLength = 10 )
 
-model_ext <- train(Extr ~ ., data = data_ext_experimental_noOut,method = 'leapBackward',preProcess = c('center', 'scale'), trControl = control, tuneLength = 10 )
+model_ext
 
+ext_test <- test_joined %>% dplyr::select(-c(vlogId, gender))
 
 ### OTHER PERSONALITIES
 
@@ -155,7 +167,7 @@ model_Emot <- train(Emot ~ ., data = data_Emot_exp_noout,method = 'leapBackward'
 
 # Open
 
-data_Open <- train_joined %>% dplyr::select(-c(vlogId, Extr:Cons, gender))
+data_Open <- train_joined %>% dplyr::select(-c(vlogId, Extr:Emot, gender))
 
 data_Open_exp  <- data_Open %>% dplyr::select(order(cor(data_Open)[,1], decreasing = TRUE)[1:15])
 
@@ -164,6 +176,57 @@ Open_outliers <- findOutlier(data_Open) %>% unlist() %>% unique()
 data_Open_exp_noout <- data_Open_exp %>% slice(-Open_outliers)
 
 model_Open <- train(Open ~ ., data = data_Open_exp_noout,method = 'leapBackward',preProcess = c('center', 'scale'), trControl = control, tuneLength = 10 )
+
+
+################################################################
+
+
+## PCA
+
+pca <- data_ext %>% dplyr::select(-1) %>% psych::principal( rotate="varimax", nfactors=15, scores=TRUE)
+
+
+
+summary(pca)
+
+order(abs(cor(data_ext$Extr, pca$scores)), decreasing = TRUE)[1:15]
+
+
+index <- numeric()
+
+for(i in 1:6){
+  index_store <- pca$rotation[,i] %>% order(decreasing = TRUE)
+  
+  if(any(index_store[1] %in% index)){
+    
+    index[i] <- setdiff(index_store, index)[1]
+    
+  } else{
+    
+    index[i] <- index_store[1]
+    
+  }
+  print(index)
+  print(index_store[1])
+  
+  
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
