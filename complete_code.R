@@ -83,6 +83,7 @@ prep <- tibble(word = pos_preposition, sentiment = "prep")
 
 pronouns <- tibble(word = pos_df_pronouns$pronoun, sentiment = pos_df_pronouns$point_of_view)
 
+# Anonymised names
 XXXX <- tibble(word = "xxxx", sentiment = "XXXX")
 
 # bind
@@ -291,5 +292,6 @@ predictions_final <- bind_rows(predictions_extr, predictions_agr, predictions_co
 predictions_unite <- predictions_final %>% 
   unite(Id, Id, type, sep = "_")
 
+# Write to CSV
 write_csv(predictions_unite, "master_predictions_final2")
 
