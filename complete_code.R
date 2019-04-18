@@ -44,11 +44,22 @@ test_set <- audiovisual %>%
 
 
 # Dictionary creation -----------------------------------------------------
+# We found literature that related certain text features to the big five personality traits. 
+# We had to create our own dictionary. We extracted the tokens from online resources and put it all
+# together in Excel and saved it as a csv file. All dictionaries used are available from our github 
+# repository: 
+# https://github.com/Joris-H/BDA/tree/Text_analysis
+# Furthermore, we used the R-package "lexicon" which had some useful dictionaries too. 
+# We binded them all together so that we could score all features in one go. 
+
+
+# our updated nrc dictionary, it additionally contains sentiments: article, I, you, sexual, tentative,
+# negate
 new_nrc <- read_csv("newnrc.csv")
 new_nrc <- new_nrc %>% 
   filter(sentiment != "prep")
 
-# LIWC 
+# LIWC: we created excel csv files with additional features found in the LIWC dictionary
 assent <- tibble(word = read_csv("LIWC - assent.csv", 
                                  col_names = FALSE)$X1, 
                  sentiment = "assent")
